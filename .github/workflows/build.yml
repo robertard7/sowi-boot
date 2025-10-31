@@ -1,0 +1,42 @@
+name: bootshim-build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: sudo apt-get update && sudo apt-get install -y build-essential uuid-dev nasm python3 xz-utils unzip
+      - name: Ensure EDK2 (vendor tar or codeload fallback)
+        run: |
+          set -e
+          mkdir -p ext/edk2
+          if [ -f vendor/edk2.tar.xz ]; then
+            tar -C ext/edk2 -xJf vendor/edk2.tar.xz
+          else
+            echo "[info] vendor/edk2.tar.xz missing — fetching from codeload"
+            curl -fsSL https://codeload.github.com/tianocore/edk2/tar.gz/refs/heads/master -o /tmp/edk2.tgz
+            tar -xzf /tmp/edk2.tgz -C /tmp
+            mv /tmp/edk2-* ext/edk2
+          fi
+          make -C ext/edk2/BaseTools -j1
+      - name: Build BootShim
+        env:
+          PYTHON_COMMAND: python3
+          PACKAGES_PATH: ${{ github.workspace }}:${{ github.workspace }}/ext/edk2
+        run: |
+          set -e
+          . ext/edk2/edksetup.sh BaseTools
+          build -a X64 -t GCC5 -b RELEASE \
+            -p SowiwosPkg/SowiwosPkg.dsc \
+            -m SowiwosPkg/Application/BootShim/BootShim.inf \
+            -n 2 | tee out/bootshim.build.log
+          mkdir -p out
+          find ext/edk2/Build -type f -iname '*BootShim*.efi' -exec cp {} out/BootShim.efi \; || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bootshim-out
+          path: out/
